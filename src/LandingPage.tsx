@@ -62,6 +62,9 @@ const LandingPage: React.FC<LandingPageProps> = ({ setIsLoggedIn, setUser }) => 
       <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
       <Image source={amsLogo} style={styles.logoImage} />
       <Text style={styles.welcomeText}>Welcome to AMS</Text>
+      <Text style={{ fontSize: 22, color: "#FFF", textAlign: "center", fontFamily: "QuicksandMedium", marginTop: -155 }}>
+        RGUKT RK-VALLEY
+      </Text>
       <TouchableOpacity style={styles.loginButton} onPress={handleGoogleLogin}>
         <Image source={googleLogo} style={styles.googleLogo} />
         <Text style={styles.loginButtonText}>LogIn with Google</Text>
@@ -72,11 +75,11 @@ const LandingPage: React.FC<LandingPageProps> = ({ setIsLoggedIn, setUser }) => 
 
 const styles = StyleSheet.create({
   container: { flex: 1, alignItems: "center", justifyContent: "space-around", padding: 20 },
-  logoImage: { width: 150, height: 150, resizeMode: "contain", tintColor: "#FFF" },
-  welcomeText: { fontSize: 42, color: "#FFF", textAlign: "center", fontFamily: "QuicksandBold" },
-  loginButton: { flexDirection: "row", backgroundColor: "#FFF", padding: 12, paddingLeft: 25, paddingRight: 25, borderRadius: 30, alignItems: "center", justifyContent: "center" },
-  googleLogo: { width: 24, height: 24, marginRight: 15 },
-  loginButtonText: { fontSize: 30, color: "#444", fontFamily: "WorkSansBold" },
+  logoImage: { width: 150, height: 150, resizeMode: "contain", tintColor: "#FFF",marginTop:80 },
+  welcomeText: { fontSize: 42, color: "#FFF", textAlign: "center", fontFamily: "QuicksandBold",marginTop:-100 },
+  loginButton: { flexDirection: "row", backgroundColor: "#FFF", padding: 12, paddingLeft: 25, paddingRight: 25, borderRadius: 30, alignItems: "center", justifyContent: "center",marginBottom:40 },
+  googleLogo: { width: 28, height: 28, marginRight: 15,marginTop:5 },
+  loginButtonText: { fontSize: 25, color: "#600202", fontFamily: "QuicksandBold" },
 });
 
-export default LandingPage;
+export default LandingPage;
