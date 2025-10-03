@@ -35,6 +35,7 @@ type ScheduleItem = {
     start_time: string;
     end_time: string;
     status: boolean;
+    subject_code: string;
 };
 
 type ScheduleData = {
@@ -47,14 +48,34 @@ type TimeSlot = {
     end_time: string;
 };
 
+type Subject = {
+    subject_code: string;
+    subject_name: string;
+    subject_type: string;
+};
+
+type ServerTimeData = {
+    datetime: string;
+    date: string;
+    time: string;
+    timezone: string;
+};
+
 const HomeScreen: React.FC<HomeScreenProps> = ({ userEmail, user, setIsLoggedIn, setUser }) => {
     const [actualFacultyId, setActualFacultyId] = useState<string>('');
     const [selectedDate, setSelectedDate] = useState<Date>(new Date());
     const [scheduleData, setScheduleData] = useState<ScheduleData | null>(null);
     const [loading, setLoading] = useState<boolean>(false);
     const [showCreateModal, setShowCreateModal] = useState<boolean>(false);
+    const [showAttendanceModal, setShowAttendanceModal] = useState<boolean>(false);
     const [availableSlots, setAvailableSlots] = useState<TimeSlot[]>([]);
     const [fetchingSlots, setFetchingSlots] = useState<boolean>(false);
+    const [subjects, setSubjects] = useState<Subject[]>([]);
+    const [selectedSchedule, setSelectedSchedule] = useState<ScheduleItem | null>(null);
+    const [generatedOTP, setGeneratedOTP] = useState<string>('');
+    const [isGeneratingOTP, setIsGeneratingOTP] = useState<boolean>(false);
+    const [serverTime, setServerTime] = useState<Date>(new Date());
+    const [timeLoading, setTimeLoading] = useState<boolean>(true);
     
     // Filter options
     const yearOptions = ['E1', 'E2', 'E3', 'E4'];
@@ -67,35 +88,57 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ userEmail, user, setIsLoggedIn,
         section: '',
         venue: '',
         start_time: '',
-        end_time: ''
+        end_time: '',
+        subject_code: ''
     });
 
     const API_BASE_URL = 'http://10.173.174.102:5000';
 
     useEffect(() => {
-        // Set faculty ID from user email when component mounts
         if (user?.email) {
-            // setActualFacultyId(user.email.split('@')[0]|| "F002");
-            setActualFacultyId("F002");
+            setActualFacultyId("F006");
         }
     }, [user]);
 
     useEffect(() => {
-        if (actualFacultyId) {
+        fetchServerTime();
+    }, []);
+
+    useEffect(() => {
+        if (actualFacultyId && !timeLoading) {
             fetchScheduleForDate(selectedDate);
         }
-    }, [selectedDate, actualFacultyId]);
+    }, [selectedDate, actualFacultyId, timeLoading]);
+
+    const fetchServerTime = async () => {
+        try {
+            setTimeLoading(true);
+            const response = await fetch(`${API_BASE_URL}/time`);
+            
+            if (!response.ok) {
+                throw new Error('Failed to fetch server time');
+            }
+            
+            const data: ServerTimeData = await response.json();
+            const serverDateTime = new Date(data.datetime);
+            setServerTime(serverDateTime);
+            console.log('Fetched server time:', serverDateTime);
+        } catch (err) {
+            console.error('Fetch server time error:', err);
+            // Fallback to system time if API fails
+            setServerTime(new Date());
+            Alert.alert('Info', 'Using system time as fallback');
+        } finally {
+            setTimeLoading(false);
+        }
+    };
 
     const fetchScheduleForDate = async (date: Date) => {
-        if (!actualFacultyId) {
-            console.log('Faculty ID not available yet');
-            return;
-        }
+        if (!actualFacultyId || timeLoading) return;
 
         try {
             setLoading(true);
             const dateStr = date.toISOString().split('T')[0];
-            console.log('Fetching schedule for:', dateStr);
             
             const response = await fetch(
                 `${API_BASE_URL}/faculty/${actualFacultyId}/schedule?date=${dateStr}`
@@ -107,7 +150,6 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ userEmail, user, setIsLoggedIn,
             }
             
             const data: ScheduleData = await response.json();
-            console.log('Schedule data:', data);
             setScheduleData(data);
         } catch (err) {
             console.error('Fetch schedule error:', err);
@@ -117,14 +159,45 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ userEmail, user, setIsLoggedIn,
         }
     };
 
+    const fetchFacultySubjects = async () => {
+        try {
+            const response = await fetch(`${API_BASE_URL}/faculty/${actualFacultyId}/subjects`);
+            if (!response.ok) {
+                throw new Error('Failed to fetch subjects');
+            }
+            const data = await response.json();
+            setSubjects(data.subjects || []);
+        } catch (err) {
+            console.error('Fetch subjects error:', err);
+            Alert.alert('Error', 'Failed to fetch subjects');
+        }
+    };
+
     const navigateDate = (days: number) => {
         const newDate = new Date(selectedDate);
         newDate.setDate(selectedDate.getDate() + days);
-        setSelectedDate(newDate);
+        
+        // Only allow yesterday, today, and tomorrow based on server time
+        const today = new Date(serverTime);
+        const tomorrow = new Date(today);
+        tomorrow.setDate(today.getDate() + 1);
+        const yesterday = new Date(today);
+        yesterday.setDate(today.getDate() - 1);
+        
+        const allowedDates = [today, tomorrow, yesterday];
+        const isAllowed = allowedDates.some(date => 
+            date.toDateString() === newDate.toDateString()
+        );
+        
+        if (isAllowed) {
+            setSelectedDate(newDate);
+        }
     };
 
     const getDateDisplayText = (): string => {
-        const today = new Date();
+        if (timeLoading) return 'Loading...';
+        
+        const today = new Date(serverTime);
         const tomorrow = new Date(today);
         tomorrow.setDate(today.getDate() + 1);
         const yesterday = new Date(today);
@@ -137,19 +210,16 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ userEmail, user, setIsLoggedIn,
         } else if (selectedDate.toDateString() === yesterday.toDateString()) {
             return "Yesterday's Schedule";
         } else {
-            return selectedDate.toLocaleDateString('en-US', {
-                weekday: 'long',
-                year: 'numeric',
-                month: 'long',
-                day: 'numeric'
-            });
+            return "Invalid Date";
         }
     };
 
     const getGreeting = (): string => {
-        const hour = new Date().getHours();
+        if (timeLoading) return 'Loading...';
+        
+        const hour = serverTime.getHours();
         if (hour < 12) return 'Good Morning';
-        if (hour < 17) return 'Good Afternoon';
+        if (hour < 15) return 'Good Afternoon';
         return 'Good Evening';
     };
 
@@ -162,6 +232,27 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ userEmail, user, setIsLoggedIn,
         return `${formattedHour}:${minutes} ${ampm}`;
     };
 
+    const getCurrentTimeStatus = (startTime: string, endTime: string): string => {
+    if (timeLoading) return 'Loading...';
+    
+    const currentTime = serverTime.getHours() * 60 + serverTime.getMinutes();
+    
+    const [startHour, startMinute] = startTime.split(':').map(Number);
+    const [endHour, endMinute] = endTime.split(':').map(Number);
+    
+    const startTimeInMinutes = startHour * 60 + startMinute;
+    const endTimeInMinutes = endHour * 60 + endMinute;
+    
+    const gracePeriod = 30; // We can change the time limit for marking attendance after the completion of class...
+    
+    if (currentTime < startTimeInMinutes) {
+        return 'Upcoming';
+    } else if (currentTime >= startTimeInMinutes && currentTime <= endTimeInMinutes + gracePeriod) {
+        return 'Ongoing';
+    } else {
+        return 'Expired';
+    }
+};
     const handleCancelSchedule = (schedule: ScheduleItem) => {
         Alert.alert(
             'Cancel Class',
@@ -196,29 +287,84 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ userEmail, user, setIsLoggedIn,
         }
     };
 
+    const handleMarkAttendance = (schedule: ScheduleItem) => {
+        setSelectedSchedule(schedule);
+        setShowAttendanceModal(true);
+        setGeneratedOTP('');
+    };
+
+    const generateOTP = async () => {
+        if (!selectedSchedule) return;
+
+        try {
+            setIsGeneratingOTP(true);
+            
+            // Generate OTP with 2 capital letters, 2 small letters, 2 digits
+            const capitals = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+            const smalls = 'abcdefghijklmnopqrstuvwxyz';
+            const digits = '0123456789';
+            
+            const getRandomChar = (str: string) => str[Math.floor(Math.random() * str.length)];
+            
+            const otp = 
+                getRandomChar(capitals) + 
+                getRandomChar(capitals) + 
+                getRandomChar(smalls) + 
+                getRandomChar(smalls) + 
+                getRandomChar(digits) + 
+                getRandomChar(digits);
+            
+            // Shuffle the OTP
+            const shuffledOTP = otp.split('').sort(() => 0.5 - Math.random()).join('');
+            
+            // Call backend to store OTP
+            const response = await fetch(`${API_BASE_URL}/generate-otp`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    schedule_id: selectedSchedule.id,
+                    faculty_id: actualFacultyId,
+                    otp: shuffledOTP
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to generate OTP');
+            }
+
+            setGeneratedOTP(shuffledOTP);
+            Alert.alert('Success', `OTP generated: ${shuffledOTP}`);
+        } catch (err) {
+            console.error('Generate OTP error:', err);
+            Alert.alert('Error', 'Failed to generate OTP');
+        } finally {
+            setIsGeneratingOTP(false);
+        }
+    };
+
     const handleCreateSchedule = () => {
         setShowCreateModal(true);
         setAvailableSlots([]);
+        fetchFacultySubjects();
     };
 
     const fetchAvailableSlots = async () => {
-        if (!newSchedule.year || !newSchedule.department || !newSchedule.section) {
-            Alert.alert('Error', 'Please select Year, Department and Section first');
+        if (!newSchedule.year || !newSchedule.department || !newSchedule.section || !newSchedule.subject_code) {
+            Alert.alert('Error', 'Please select Year, Department, Section and Subject first');
             return;
         }
 
         try {
             setFetchingSlots(true);
             const dateStr = selectedDate.toISOString().split('T')[0];
-            console.log('Fetching slots for:', {
-                date: dateStr,
-                year: newSchedule.year,
-                department: newSchedule.department,
-                section: newSchedule.section
-            });
+            
+            const selectedSubject = subjects.find(sub => sub.subject_code === newSchedule.subject_code);
+            const subjectType = selectedSubject?.subject_type || 'normal';
 
             const response = await fetch(
-                `${API_BASE_URL}/faculty/${actualFacultyId}/available-slots?date=${dateStr}&year=${newSchedule.year}&department=${newSchedule.department}&section=${newSchedule.section}`
+                `${API_BASE_URL}/faculty/${actualFacultyId}/available-slots?date=${dateStr}&year=${newSchedule.year}&department=${newSchedule.department}&section=${newSchedule.section}&subject_type=${subjectType}`
             );
             
             if (!response.ok) {
@@ -227,7 +373,6 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ userEmail, user, setIsLoggedIn,
             }
             
             const data = await response.json();
-            console.log('Available slots:', data);
             
             if (data.success) {
                 setAvailableSlots(data.available_slots || []);
@@ -248,8 +393,8 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ userEmail, user, setIsLoggedIn,
 
     const handleCreateSubmit = async () => {
         if (!newSchedule.year || !newSchedule.department || !newSchedule.section || 
-            !newSchedule.start_time || !newSchedule.end_time) {
-            Alert.alert('Error', 'Please fill all required fields including time slot');
+            !newSchedule.start_time || !newSchedule.end_time || !newSchedule.subject_code) {
+            Alert.alert('Error', 'Please fill all required fields including subject and time slot');
             return;
         }
 
@@ -263,10 +408,9 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ userEmail, user, setIsLoggedIn,
                 section: newSchedule.section,
                 start_time: newSchedule.start_time,
                 end_time: newSchedule.end_time,
-                venue: newSchedule.venue || ''
+                venue: newSchedule.venue || '',
+                subject_code: newSchedule.subject_code
             };
-
-            console.log('Creating schedule with:', payload);
 
             const response = await fetch(`${API_BASE_URL}/schedule`, {
                 method: 'POST',
@@ -299,7 +443,8 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ userEmail, user, setIsLoggedIn,
             section: '',
             venue: '',
             start_time: '',
-            end_time: ''
+            end_time: '',
+            subject_code: ''
         });
         setAvailableSlots([]);
     };
@@ -336,20 +481,47 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ userEmail, user, setIsLoggedIn,
         </View>
     );
 
-    const renderScheduleCard = ({ item }: { item: ScheduleItem }) => (
+    const renderScheduleCard = ({ item }: { item: ScheduleItem }) => {
+    const timeStatus = getCurrentTimeStatus(item.start_time, item.end_time);
+    const isCompleted = item.status === true;
+    const isOngoing = timeStatus === 'Ongoing' && !item.status;
+    const isExpired = timeStatus === 'Expired' && !item.status;
+    const isScheduled = timeStatus === 'Upcoming' && !item.status;
+    
+    // Determine badge text and style
+    let badgeText = 'Loading...';
+    let badgeStyle = styles.loadingBadge;
+    
+    if (!timeLoading) {
+        if (isCompleted) {
+            badgeText = 'Completed';
+            badgeStyle = styles.completedBadge;
+        } else if (isOngoing) {
+            badgeText = 'Ongoing';
+            badgeStyle = styles.ongoingBadge;
+        } else if (isExpired) {
+            badgeText = 'Expired';
+            badgeStyle = styles.expiredBadge;
+        } else if (isScheduled) {
+            badgeText = 'Scheduled';
+            badgeStyle = styles.scheduledBadge;
+        }
+    }
+    
+    return (
         <View style={styles.scheduleCard}>
             <View style={styles.scheduleInfo}>
                 <View style={styles.scheduleHeader}>
                     <Text style={styles.subjectName}>{item.subject_name}</Text>
-                    <View style={styles.scheduleBadge}>
-                        <Text style={styles.scheduleBadgeText}>CLASS</Text>
+                    <View style={[styles.timeStatusBadge, badgeStyle]}>
+                        <Text style={styles.timeStatusText}>{badgeText}</Text>
                     </View>
                 </View>
                 <View style={styles.scheduleDetailsContainer}>
                     <View style={styles.detailRow}>
                         <Icon name="school" size={14} color="#600202" />
                         <Text style={styles.scheduleDetails}>
-                            {item.year} {item.department} - {item.section}
+                            E-{item.year} ,{item.department} - {item.section}
                         </Text>
                     </View>
                     <View style={styles.detailRow}>
@@ -372,24 +544,39 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ userEmail, user, setIsLoggedIn,
                     </View>
                 </View>
             </View>
+            
             <View style={styles.actionButtons}>
-                <TouchableOpacity 
-                    style={styles.cancelButton}
-                    onPress={() => handleCancelSchedule(item)}
-                >
-                    <Icon name="close" size={16} color="#FFF" />
-                </TouchableOpacity>
+                {isOngoing && !item.status && (
+                    <TouchableOpacity 
+                        style={styles.attendanceButton}
+                        onPress={() => handleMarkAttendance(item)}
+                    >
+                        <Icon name="how-to-reg" size={16} color="#FFF" />
+                        <Text style={styles.attendanceButtonText}>Mark Attendance</Text>
+                    </TouchableOpacity>
+                )}
+                {!isCompleted && !item.status && timeStatus !== 'Loading...' && (
+                    <TouchableOpacity 
+                        style={styles.cancelButton}
+                        onPress={() => handleCancelSchedule(item)}
+                    >
+                        <Icon name="close" size={16} color="#FFF" />
+                    </TouchableOpacity>
+                )}
             </View>
         </View>
     );
+};
 
-    // Show loading if faculty ID is not available yet
-    if (!actualFacultyId && user?.email) {
+    // Show loading if faculty ID is not available yet or time is loading
+    if ((!actualFacultyId && user?.email) || timeLoading) {
         return (
             <View style={styles.container}>
                 <View style={styles.loadingContainer}>
                     <ActivityIndicator size="large" color="#f5f5f5" />
-                    <Text style={styles.loadingText}>Loading Faculty Data...</Text>
+                    <Text style={styles.loadingText}>
+                        {timeLoading ? 'Fetching Server Time...' : 'Loading Faculty Data...'}
+                    </Text>
                 </View>
             </View>
         );
@@ -401,8 +588,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ userEmail, user, setIsLoggedIn,
             <View style={styles.header}>
                 <Text style={styles.greeting}>
                     {getGreeting()}, {user?.name || scheduleData?.faculty_name || 'Faculty'}!
-                </Text>
-                
+                </Text>    
                 {/* Calendar Navigation */}
                 <View style={styles.calendarNav}>
                     <TouchableOpacity 
@@ -440,7 +626,13 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ userEmail, user, setIsLoggedIn,
                 </View>
             ) : (
                 <FlatList
-                    data={scheduleData?.schedules || []}
+                    data={(scheduleData?.schedules || []).sort(
+                        (a, b) => {
+                            const [ah, am] = a.start_time.split(':').map(Number);
+                            const [bh, bm] = b.start_time.split(':').map(Number);
+                            return ah * 60 + am - (bh * 60 + bm);
+                        }
+                    )}
                     renderItem={renderScheduleCard}
                     keyExtractor={(item) => item.id?.toString() || Math.random().toString()}
                     contentContainerStyle={styles.listContainer}
@@ -497,7 +689,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ userEmail, user, setIsLoggedIn,
                         <ScrollView style={styles.formContainer}>
                             {/* Filter Sections */}
                             {renderFilterButtons(yearOptions, newSchedule.year, 
-                                (value) => setNewSchedule({...newSchedule, year: value}), 'Academic Year')}
+                                (value) => setNewSchedule({...newSchedule, year: value}),'Academic Year')}
                             
                             {renderFilterButtons(departmentOptions, newSchedule.department, 
                                 (value) => setNewSchedule({...newSchedule, department: value}), 'Department')}
@@ -505,8 +697,35 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ userEmail, user, setIsLoggedIn,
                             {renderFilterButtons(sectionOptions, newSchedule.section, 
                                 (value) => setNewSchedule({...newSchedule, section: value}), 'Section')}
 
+                            {/* Subject Dropdown */}
+                            <View style={styles.inputGroup}>
+                                <Text style={styles.label}>Subject *</Text>
+                                <ScrollView style={styles.subjectDropdown}>
+                                    {subjects.map((subject) => (
+                                        <TouchableOpacity
+                                            key={subject.subject_code}
+                                            style={[
+                                                styles.subjectItem,
+                                                newSchedule.subject_code === subject.subject_code && styles.subjectItemSelected
+                                            ]}
+                                            onPress={() => setNewSchedule({
+                                                ...newSchedule, 
+                                                subject_code: subject.subject_code
+                                            })}
+                                        >
+                                            <Text style={styles.subjectText}>
+                                                {subject.subject_code} - {subject.subject_name}
+                                            </Text>
+                                            <Text style={styles.subjectType}>
+                                                ({subject.subject_type})
+                                            </Text>
+                                        </TouchableOpacity>
+                                    ))}
+                                </ScrollView>
+                            </View>
+
                             {/* Fetch Time Slots Button */}
-                            {newSchedule.year && newSchedule.department && newSchedule.section && (
+                            {newSchedule.year && newSchedule.department && newSchedule.section && newSchedule.subject_code && (
                                 <TouchableOpacity 
                                     style={[styles.fetchSlotsButton, fetchingSlots && styles.buttonDisabled]}
                                     onPress={fetchAvailableSlots}
@@ -593,6 +812,112 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ userEmail, user, setIsLoggedIn,
                     </View>
                 </KeyboardAvoidingView>
             </Modal>
+
+            {/* Mark Attendance Modal */}
+            <Modal
+                visible={showAttendanceModal}
+                animationType="slide"
+                transparent={true}
+                onRequestClose={() => {
+                    setShowAttendanceModal(false);
+                    setSelectedSchedule(null);
+                    setGeneratedOTP('');
+                }}
+            >
+                <KeyboardAvoidingView 
+                    behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
+                    style={styles.modalContainer}
+                >
+                    <View style={styles.modalContent}>
+                        <View style={styles.modalHeader}>
+                            <Text style={styles.modalTitle}>Mark Attendance</Text>
+                            <TouchableOpacity onPress={() => {
+                                setShowAttendanceModal(false);
+                                setSelectedSchedule(null);
+                                setGeneratedOTP('');
+                            }}>
+                                <Icon name="close" size={24} color="#600202" />
+                            </TouchableOpacity>
+                        </View>
+                        
+                        <ScrollView style={styles.formContainer}>
+                            {selectedSchedule && (
+                                <View style={styles.classInfoContainer}>
+                                    <Text style={styles.classInfoTitle}>Class Details</Text>
+                                    <View style={styles.classDetailRow}>
+                                        <Text style={styles.classDetailLabel}>Subject:</Text>
+                                        <Text style={styles.classDetailValue}>{selectedSchedule.subject_name}</Text>
+                                    </View>
+                                    <View style={styles.classDetailRow}>
+                                        <Text style={styles.classDetailLabel}>Class:</Text>
+                                        <Text style={styles.classDetailValue}>
+                                            E-{selectedSchedule.year} {selectedSchedule.department} - {selectedSchedule.section}
+                                        </Text>
+                                    </View>
+                                    <View style={styles.classDetailRow}>
+                                        <Text style={styles.classDetailLabel}>Time:</Text>
+                                        <Text style={styles.classDetailValue}>
+                                            {formatTime(selectedSchedule.start_time)} - {formatTime(selectedSchedule.end_time)}
+                                        </Text>
+                                    </View>
+                                    <View style={styles.classDetailRow}>
+                                        <Text style={styles.classDetailLabel}>Venue:</Text>
+                                        <Text style={styles.classDetailValue}>
+                                            {selectedSchedule.venue || 'Not specified'}
+                                        </Text>
+                                    </View>
+                                    <View style={styles.classDetailRow}>
+                                        <Text style={styles.classDetailLabel}>Current Server Time:</Text>
+                                        <Text style={styles.classDetailValue}>
+                                            {serverTime.toLocaleTimeString('en-US', {
+                                                hour: '2-digit',
+                                                minute: '2-digit',
+                                                second: '2-digit',
+                                                hour12: true
+                                            })}
+                                        </Text>
+                                    </View>
+                                </View>
+                            )}
+
+                            {/* OTP Generation Section */}
+                            <View style={styles.otpSection}>
+                                <Text style={styles.otpTitle}>Generate OTP for Attendance</Text>
+                                <Text style={styles.otpDescription}>
+                                    Generate a one-time password to share with students
+                                </Text>
+                                
+                                <TouchableOpacity 
+                                    style={[styles.generateOtpButton, isGeneratingOTP && styles.buttonDisabled]}
+                                    onPress={generateOTP}
+                                    disabled={isGeneratingOTP}
+                                >
+                                    {isGeneratingOTP ? (
+                                        <ActivityIndicator size="small" color="#FFFFFF" />
+                                    ) : (
+                                        <>
+                                            <Icon name="vpn-key" size={20} color="#FFF" />
+                                            <Text style={styles.generateOtpButtonText}>
+                                                {generatedOTP ? 'Regenerate OTP' : 'Generate OTP'}
+                                            </Text>
+                                        </>
+                                    )}
+                                </TouchableOpacity>
+
+                                {generatedOTP && (
+                                    <View style={styles.generatedOtpContainer}>
+                                        <Text style={styles.generatedOtpLabel}>Generated OTP:</Text>
+                                        <Text style={styles.generatedOtpValue}>{generatedOTP}</Text>
+                                        <Text style={styles.otpInstruction}>
+                                            Share this OTP with your students. They need to enter this in their app to mark attendance.
+                                        </Text>
+                                    </View>
+                                )}
+                            </View>
+                        </ScrollView>
+                    </View>
+                </KeyboardAvoidingView>
+            </Modal>
         </View>
     );
 };
@@ -675,25 +1000,17 @@ const styles = StyleSheet.create({
     scheduleHeader: {
         flexDirection: 'row',
         alignItems: 'center',
+        justifyContent: 'space-between',
         marginBottom: 8,
     },
     subjectName: {
         color: '#600202',
         fontSize: 16,
         fontWeight: 'bold',
-        marginRight: 10,
+        flex: 1,
     },
-    scheduleBadge: {
-        backgroundColor: '#600202',
-        paddingHorizontal: 8,
-        paddingVertical: 2,
-        borderRadius: 6,
-    },
-    scheduleBadgeText: {
-        color: '#f5f5f5',
-        fontSize: 10,
-        fontWeight: 'bold',
-    },
+    
+   
     scheduleDetailsContainer: {},
     detailRow: {
         flexDirection: 'row',
@@ -707,6 +1024,21 @@ const styles = StyleSheet.create({
     },
     actionButtons: {
         flexDirection: 'row',
+        gap: 8,
+    },
+    attendanceButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#28a745',
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        borderRadius: 6,
+        gap: 4,
+    },
+    attendanceButtonText: {
+        color: '#FFF',
+        fontSize: 12,
+        fontWeight: '600',
     },
     cancelButton: {
         backgroundColor: '#dc3545',
@@ -816,6 +1148,43 @@ const styles = StyleSheet.create({
         color: '#f5f5f5',
         fontWeight: '600',
     },
+    // Subject Dropdown
+    inputGroup: {
+        marginBottom: 20,
+    },
+    label: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#600202',
+        marginBottom: 8,
+    },
+    subjectDropdown: {
+        maxHeight: 150,
+        borderWidth: 1,
+        borderColor: '#ddd',
+        borderRadius: 8,
+        backgroundColor: '#f8f9fa',
+    },
+    subjectItem: {
+        padding: 12,
+        borderBottomWidth: 1,
+        borderBottomColor: '#e9ecef',
+    },
+    subjectItemSelected: {
+        backgroundColor: '#D4EDDA',
+        borderLeftWidth: 4,
+        borderLeftColor: '#28A745',
+    },
+    subjectText: {
+        fontSize: 14,
+        color: '#600202',
+        fontWeight: '500',
+    },
+    subjectType: {
+        fontSize: 12,
+        color: '#6C757D',
+        marginTop: 2,
+    },
     fetchSlotsButton: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -863,15 +1232,6 @@ const styles = StyleSheet.create({
         color: '#28A745',
         fontWeight: '500',
         textAlign: 'center',
-    },
-    inputGroup: {
-        marginBottom: 20,
-    },
-    label: {
-        fontSize: 16,
-        fontWeight: '600',
-        color: '#600202',
-        marginBottom: 8,
     },
     textInput: {
         borderWidth: 1,
@@ -929,6 +1289,131 @@ const styles = StyleSheet.create({
         fontWeight: '600',
         fontSize: 16,
     },
+    // Attendance Modal Styles
+    classInfoContainer: {
+        backgroundColor: '#F8F9FA',
+        padding: 15,
+        borderRadius: 12,
+        marginBottom: 20,
+        borderLeftWidth: 4,
+        borderLeftColor: '#600202',
+    },
+    classInfoTitle: {
+        fontSize: 16,
+        fontWeight: 'bold',
+        color: '#600202',
+        marginBottom: 10,
+    },
+    classDetailRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        marginBottom: 6,
+    },
+    classDetailLabel: {
+        fontSize: 14,
+        color: '#600202',
+        fontWeight: '600',
+    },
+    classDetailValue: {
+        fontSize: 14,
+        color: '#495057',
+        fontWeight: '500',
+    },
+    otpSection: {
+        backgroundColor: '#E8F5E8',
+        padding: 15,
+        borderRadius: 12,
+        borderLeftWidth: 4,
+        borderLeftColor: '#28A745',
+    },
+    otpTitle: {
+        fontSize: 16,
+        fontWeight: 'bold',
+        color: '#28A745',
+        marginBottom: 5,
+    },
+    otpDescription: {
+        fontSize: 14,
+        color: '#495057',
+        marginBottom: 15,
+        lineHeight: 20,
+    },
+    generateOtpButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#28A745',
+        paddingVertical: 12,
+        paddingHorizontal: 16,
+        borderRadius: 8,
+        justifyContent: 'center',
+        gap: 8,
+        marginBottom: 10,
+    },
+    generateOtpButtonText: {
+        color: '#FFFFFF',
+        fontSize: 16,
+        fontWeight: '600',
+    },
+    generatedOtpContainer: {
+        backgroundColor: '#FFFFFF',
+        padding: 15,
+        borderRadius: 8,
+        borderWidth: 1,
+        borderColor: '#28A745',
+    },
+    generatedOtpLabel: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: '#28A745',
+        marginBottom: 5,
+    },
+    generatedOtpValue: {
+        fontSize: 24,
+        fontWeight: 'bold',
+        color: '#600202',
+        textAlign: 'center',
+        marginVertical: 10,
+        letterSpacing: 3,
+    },
+    otpInstruction: {
+        fontSize: 12,
+        color: '#6C757D',
+        fontStyle: 'italic',
+        textAlign: 'center',
+    },
+   
+    loadingBadgeText: {
+        color: '#FFFFFF',
+        fontSize: 10,
+        fontWeight: 'bold',
+    },
+    timeStatusBadge: {
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        borderRadius: 6,
+        marginLeft: 8,
+    },
+    ongoingBadge: {
+        backgroundColor: '#28a745', // Green for ongoing
+    },
+    completedBadge: {
+        backgroundColor: '#007bff', // Blue for completed
+    },
+    expiredBadge: {
+        backgroundColor: '#f40e25ff', // Red for expired
+    },
+    scheduledBadge: {
+        backgroundColor: '#ffc107', // Yellow for scheduled/upcoming
+    },
+    loadingBadge: {
+        backgroundColor: '#6c757d', // Gray for loading
+    },
+    timeStatusText: {
+        color: '#FFFFFF',
+        fontSize: 10,
+        fontWeight: 'bold',
+    },
+
 });
 
 export default HomeScreen;
